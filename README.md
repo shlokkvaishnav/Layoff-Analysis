@@ -60,20 +60,79 @@ streamlit run streamlit_app.py
 
 ## Honest limitations (say these out loud during the presentation)
 
-- **layoffs.fyi's Airtable view may or may not be publicly readable at
-  presentation time** — websites change. `tracker_scraper.py` is written to
-  fail loudly with a clear message and fall back automatically, rather than
-  silently returning stale or fake data. If all three live sources fail
-  during your actual run, that's worth narrating rather than papering over.
+All of the below were verified against the real live internet on
+**2026-08-03** — not speculation. Re-verify closer to your actual
+presentation date, since every one of these is a moving target by design.
+
+- **layoffs.fyi's Airtable base is real and auto-discoverable, but not
+  publicly readable.** The base id (`app1PaujS9zxVGUZ4` as of 2026-08-03) is
+  sitting in plain page-source HTML on layoffs.fyi (no devtools Network-tab
+  digging needed — `tracker_scraper.py` now scrapes it automatically). But
+  every request to Airtable's REST API against that base returns
+  `401 AUTHENTICATION_REQUIRED`, with or without a table name/id — the base
+  itself is locked down. The embed page also renders client-side (no
+  records inline in the HTML), so there's no static-HTML shortcut either. A
+  real `AIRTABLE_PAT` is required; without one this source fails immediately
+  and predictably, exactly as designed.
+- **The Apify actor (`useful-ai~tech-layoff-intelligence-tracker`) is real,
+  public, and active** — 712 successful runs in the last 30 days per its
+  public store listing, most recently run the same day this was checked.
+  It correctly requires an `APIFY_TOKEN` (401 `token-not-provided` without
+  one); the free tier's exact monthly compute-unit limits are set at the
+  Apify account level and weren't verified here, since that requires
+  creating an account — check apify.com's current free-tier terms before
+  presenting.
+- **California EDD's WARN page no longer has the notice listing as an HTML
+  table** — an earlier obvious pick for `scrape_warn_act()`'s default. Its
+  actual data now ships as XLSX/PDF downloads; the one `<table>` still on
+  the page is an unrelated legal-provisions comparison chart. The old
+  "grab the largest `<table>`" heuristic would have silently parsed that
+  wrong table instead of failing — `scrape_warn_act()` now validates that
+  the chosen table's headers look WARN-notice-shaped (company/employer +
+  date columns) before accepting it, and raises otherwise. The default
+  state URL was switched to **Maryland DLLR**
+  (`https://www.dllr.state.md.us/employment/warn.shtml`), which does still
+  serve a genuine server-rendered table (85 real notices as of the last
+  check) — but Maryland's real column names are `Company`, `Notice Date`,
+  `Total  Employees` (note the double space, an artifact of collapsed
+  `<br>` tags), not `company`/`date`/`laid_off`, and WARN filings report a
+  NAICS code, not a marketing-style sector, so `clean_tracker_dataframe()`
+  is called with an explicit column map depending on which source actually
+  succeeded (see `pipeline/clean.py`'s `__main__` block and the notebook's
+  section 3).
+- **trueup.io/layoffs is a genuine, confirmed dead end for
+  requests+BeautifulSoup**, not a bug to fix: it's behind a Cloudflare JS
+  challenge ("Just a moment...") that returns 403 to every plain HTTP
+  request regardless of User-Agent/Accept headers, because passing it
+  requires executing JS. `scrape_trueup_headline()` now raises a
+  `RuntimeError` that says exactly this, instead of an opaque
+  `HTTPError`. Getting real data out of this source would require a
+  headless browser (Playwright/Selenium), which this project deliberately
+  avoids — a fine live talking point about the limits of "just use
+  requests."
+- **TechCrunch's RSS feed (`techcrunch.com/feed/`) still resolves and
+  parses cleanly.** The originally-planned Reuters feed
+  (`reutersagency.com/feed/?best-topics=tech`) is dead — that domain is now
+  a corporate agency-services site with no such feed (404), and the
+  obvious alternative (`reuters.com/technology/rss`) is blocked by a
+  bot-detection challenge that requires JS (401). Swapped in CNBC's
+  Technology RSS feed instead, which resolved fine and covers layoffs
+  regularly. On any given day, though, expect **zero** layoff-relevant
+  headlines in the top ~20-30 items of either feed — that's not a bug, it's
+  the real limit of a simple keyword filter over a general tech feed rather
+  than a dedicated layoffs feed.
+- **`pd.read_html()` requires an `io.StringIO` wrapper on current pandas**
+  (3.x) — passing a raw HTML string directly now raises an `OSError`
+  ("Error reading file") because pandas treats a bare string as a
+  filepath/URL rather than markup. Fixed in `scrape_warn_act()`.
 - **The reason-extraction step is deliberately naive** (keyword matching,
   not real NLP) — this is intentional so participants can see its limits
   rather than trust a black box.
 - **The ARIMA order is fixed, not auto-tuned**, to keep the model's
-  assumptions visible and debuggable live.
-- **This was built and reviewed without live network access to layoffs.fyi,
-  trueup.io, or news RSS feeds** (the development sandbox only allows
-  package-registry domains). Test every scraper function against the real
-  live internet before presenting — do not assume it works untested.
+  assumptions visible and debuggable live. Confirmed to fit successfully on
+  real WARN Act data (7 months of history, right at ARIMA's practical
+  minimum) — with only 7 months, treat the resulting confidence interval as
+  illustrative, not precise; the code's own `confidence_audit()` flags this.
 
 ## Pedagogical checkpoint questions (embedded in the notebook, left unanswered)
 

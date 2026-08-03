@@ -170,6 +170,15 @@ def clean_tracker_dataframe(raw_df: pd.DataFrame,
         if required not in df.columns:
             df[required] = np.nan
 
+    # Real-world headcount columns aren't clean numerics -- e.g. WARN Act
+    # listings mix plain integers with annotated strings like
+    # "4(Remote workers in MD)". Pull the leading number out and coerce the
+    # rest to NaN rather than letting a stray string column crash the
+    # downstream sector-median groupby.
+    df["laid_off"] = pd.to_numeric(
+        df["laid_off"].astype(str).str.extract(r"(\d+)", expand=False), errors="coerce"
+    )
+
     df["date"] = df["date"].apply(standardize_date)
     df["sector"] = df["sector"].apply(standardize_sector)
     df = dedupe_company_names(df, name_col="company")
@@ -182,8 +191,30 @@ def clean_tracker_dataframe(raw_df: pd.DataFrame,
 
 
 if __name__ == "__main__":
+    import os
+
     raw = pd.read_csv("../data/raw/tracker_raw_live.csv")
-    cleaned = clean_tracker_dataframe(raw)
+
+    # Column names here match whichever live source actually produced
+    # ../data/raw/tracker_raw_live.csv (see get_live_tracker_data()'s
+    # fallback order in tracker_scraper.py). Confirmed live 2026-08-03: with
+    # no AIRTABLE_PAT/APIFY_TOKEN set, that source is WARN Act (Maryland
+    # DLLR), whose real column names are 'Company' / 'Notice Date' /
+    # 'Total  Employees' -- nothing resembling 'sector', so sector standardizes
+    # to "Unknown" for every row, which is an honest reflection of what WARN
+    # filings actually report (industry NAICS code, not a marketing sector).
+    column_map = dict(company_col="Company", date_col="Notice Date",
+                       sector_col="sector", headcount_col="Total  Employees")
+    if "company" in raw.columns:  # Airtable/Apify-shaped data instead
+        column_map = dict(company_col="company", date_col="date",
+                           sector_col="sector", headcount_col="laid_off")
+
+    cleaned = clean_tracker_dataframe(raw, **column_map)
     print(f"Cleaned {len(cleaned)} rows from {len(raw)} raw rows.")
     print(f"Rows with imputed headcount: {cleaned['_headcount_imputed'].sum()}")
+    print(f"Distinct companies after fuzzy dedupe: {cleaned['company'].nunique()} "
+          f"(from {cleaned['company_original'].nunique()} original name variants)")
+
+    os.makedirs("../data/cleaned", exist_ok=True)
     cleaned.to_csv("../data/cleaned/tracker_cleaned.csv", index=False)
+    print("Saved to ../data/cleaned/tracker_cleaned.csv")

@@ -21,6 +21,7 @@ Run this file directly during the demo to see raw, messy, live output:
 """
 
 import os
+import re
 import time
 import json
 import requests
@@ -31,10 +32,36 @@ USER_AGENT = "Mozilla/5.0 (compatible; LayoffPulse2026Bot/1.0; DS Club education
 HEADERS = {"User-Agent": USER_AGENT}
 REQUEST_TIMEOUT = 15
 
+# Confirmed live 2026-08-03: a state WARN page with a genuine server-rendered
+# HTML table of individual notices (not just a PDF/XLSX download, which is
+# what CA EDD's page moved to -- see scrape_warn_act() docstring).
+DEFAULT_WARN_STATE_URL = "https://www.dllr.state.md.us/employment/warn.shtml"
 
 # ---------------------------------------------------------------------------
 # 1. layoffs.fyi -> embedded Airtable view
 # ---------------------------------------------------------------------------
+
+def _discover_airtable_base_id() -> str:
+    """
+    Auto-discover the Airtable base id embedded in layoffs.fyi's homepage
+    HTML. Confirmed live 2026-08-03: the id is sitting in plain page source
+    as an `airtable.com/embed/appXXXXXXXXXXXXXX/...` link -- no devtools
+    Network-tab digging required, just a regex over the raw HTML. Kept as a
+    live call (not hardcoded) since this is exactly the kind of thing that
+    silently rots: if layoffs.fyi swaps embed providers, this raises instead
+    of returning a stale id.
+    """
+    resp = requests.get("https://layoffs.fyi/", headers=HEADERS, timeout=REQUEST_TIMEOUT)
+    resp.raise_for_status()
+    match = re.search(r"airtable\.com/embed/(app[a-zA-Z0-9]{14})", resp.text)
+    if not match:
+        raise RuntimeError(
+            "Could not find an Airtable base id embedded in layoffs.fyi's "
+            "homepage HTML -- the page may have swapped embed providers or "
+            "moved to JS-only rendering since this was last checked."
+        )
+    return match.group(1)
+
 
 def scrape_layoffsfyi_airtable(base_id: str = None, table_name: str = "Layoffs") -> pd.DataFrame:
     """
@@ -45,13 +72,21 @@ def scrape_layoffsfyi_airtable(base_id: str = None, table_name: str = "Layoffs")
     is publicly readable, this hits Airtable's real REST API directly --
     no Selenium, no HTML parsing, just clean JSON.
 
+    Confirmed live 2026-08-03: the base id (currently 'app1PaujS9zxVGUZ4') is
+    real and auto-discoverable straight from layoffs.fyi's HTML (see
+    _discover_airtable_base_id()), but Airtable's REST API returns
+    401 AUTHENTICATION_REQUIRED on every table/table-id tried against it
+    without a Personal Access Token -- the base is not publicly readable.
+    The embed HTML itself also renders client-side (no records inline in
+    the page source), so there's no static-HTML shortcut either; a PAT (or
+    falling back to Apify/WARN Act) is genuinely required.
+
     Parameters
     ----------
     base_id : str
-        Airtable base id (looks like 'appXXXXXXXXXXXXXX'). Find it live in
-        front of the audience via browser devtools on layoffs.fyi -- this is
-        itself a good "here's how you actually find where the data lives"
-        demo moment. Can also be set via the LAYOFFSFYI_AIRTABLE_BASE env var.
+        Airtable base id (looks like 'appXXXXXXXXXXXXXX'). If omitted, this
+        is auto-discovered live from layoffs.fyi's homepage HTML (falling
+        back to the LAYOFFSFYI_AIRTABLE_BASE env var if discovery fails).
     table_name : str
         Table name or id within the base.
 
@@ -63,15 +98,20 @@ def scrape_layoffsfyi_airtable(base_id: str = None, table_name: str = "Layoffs")
         be narrated live, not treated as a bug.
     """
     base_id = base_id or os.environ.get("LAYOFFSFYI_AIRTABLE_BASE")
-    pat = os.environ.get("AIRTABLE_PAT")  # optional Personal Access Token
-
     if not base_id:
-        raise RuntimeError(
-            "No Airtable base_id supplied. Find it live: open layoffs.fyi, "
-            "click through to the embedded Airtable view, open browser "
-            "devtools -> Network tab, filter for 'airtable.com', and copy "
-            "the appXXXXXXXXXXXXXX id from the request URL."
-        )
+        try:
+            base_id = _discover_airtable_base_id()
+            print(f"      (auto-discovered Airtable base id: {base_id})")
+        except Exception as e:
+            raise RuntimeError(
+                f"No Airtable base_id supplied and auto-discovery failed ({e}). "
+                "Find it live: open layoffs.fyi, click through to the embedded "
+                "Airtable view, open browser devtools -> Network tab, filter "
+                "for 'airtable.com', and copy the appXXXXXXXXXXXXXX id from "
+                "the request URL."
+            )
+
+    pat = os.environ.get("AIRTABLE_PAT")  # optional Personal Access Token
 
     url = f"https://api.airtable.com/v0/{base_id}/{table_name}"
     req_headers = dict(HEADERS)
@@ -129,8 +169,22 @@ def scrape_via_apify(actor_id: str = "useful-ai~tech-layoff-intelligence-tracker
             "export APIFY_TOKEN=... before calling this function."
         )
 
+    # run-sync-get-dataset-items blocks until the actor finishes an actual
+    # live scrape of layoffs.fyi, which routinely takes well over a minute --
+    # confirmed live: a 60s client timeout fires before the actor is done,
+    # which looks like a network failure but is really just "didn't wait
+    # long enough." Apify's own default actor timeout is up to 300s, so the
+    # client timeout needs headroom beyond that.
     run_url = f"https://api.apify.com/v2/acts/{actor_id}/run-sync-get-dataset-items"
-    resp = requests.get(run_url, params={"token": token}, timeout=60)
+    try:
+        resp = requests.get(run_url, params={"token": token}, timeout=300)
+    except requests.exceptions.Timeout:
+        raise RuntimeError(
+            "Apify actor run timed out client-side after 300s. The actor "
+            "may be slow/queued on Apify's end right now -- check the run's "
+            "status at https://console.apify.com/ or fall back to "
+            "scrape_warn_act()."
+        )
     resp.raise_for_status()
     items = resp.json()
 
@@ -147,19 +201,30 @@ def scrape_via_apify(actor_id: str = "useful-ai~tech-layoff-intelligence-tracker
 # 3. WARN Act state filings (official, server-rendered)
 # ---------------------------------------------------------------------------
 
-def scrape_warn_act(state_url: str) -> pd.DataFrame:
+def scrape_warn_act(state_url: str = DEFAULT_WARN_STATE_URL) -> pd.DataFrame:
     """
     LIVE scrape of a single state's WARN Act notice listing page using
     requests + BeautifulSoup (no JS rendering needed -- these are usually
-    plain server-rendered HTML tables, e.g. California EDD's WARN report).
+    plain server-rendered HTML tables).
+
+    Confirmed live 2026-08-03: California EDD's WARN page (an earlier
+    obvious pick) has moved its actual notice data to XLSX/PDF downloads --
+    the only <table> left on that page is an unrelated legal-provisions
+    comparison table, which the old "just take the largest table" heuristic
+    would have silently accepted as real data. Maryland DLLR's WARN page
+    (the default here) still serves a genuine server-rendered HTML table of
+    individual notices, so it's used as the default demo URL. To guard
+    against the CA-style failure mode for whichever URL you pass in, the
+    chosen table's headers are checked for WARN-notice-shaped column names
+    before being accepted.
 
     Parameters
     ----------
     state_url : str
         Direct URL to a state labor department's WARN notice listing.
-        Pass this in live so the audience sees you picking a real state
-        page (e.g. California EDD WARN report) and inspecting its table
-        structure before writing the parser.
+        Defaults to Maryland DLLR's page; pass a different one live so the
+        audience sees you picking a real state page and inspecting its
+        table structure before writing the parser.
 
     Returns
     -------
@@ -169,6 +234,7 @@ def scrape_warn_act(state_url: str) -> pd.DataFrame:
         problem you'll hit in pipeline/clean.py.
     """
     from bs4 import BeautifulSoup
+    from io import StringIO
 
     resp = requests.get(state_url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
@@ -182,12 +248,26 @@ def scrape_warn_act(state_url: str) -> pd.DataFrame:
             "example of a source going stale mid-project."
         )
 
-    # Take the largest table on the page as the notice listing
-    target_table = max(tables, key=lambda t: len(t.find_all("tr")))
-    df = pd.read_html(str(target_table))[0]
-    df["_source"] = f"WARN Act ({state_url})"
-    df["_scraped_at"] = datetime.utcnow().isoformat()
-    return df
+    # Consider tables largest-first, but only accept one whose header row
+    # actually looks like a WARN notice listing (company/employer + a date
+    # column) -- otherwise we risk silently parsing an unrelated table on
+    # the page (confirmed to happen on CA EDD's page, which still has one
+    # <table> that's just a legal-provisions comparison chart).
+    warn_shape_keywords = ("company", "employer", "notice", "date", "employee")
+    for target_table in sorted(tables, key=lambda t: len(t.find_all("tr")), reverse=True):
+        df = pd.read_html(StringIO(str(target_table)))[0]
+        headers = " ".join(str(c) for c in df.columns).lower()
+        if any(kw in headers for kw in warn_shape_keywords) and len(df) > 1:
+            df["_source"] = f"WARN Act ({state_url})"
+            df["_scraped_at"] = datetime.utcnow().isoformat()
+            return df
+
+    raise RuntimeError(
+        f"Found {len(tables)} <table> element(s) at {state_url}, but none had "
+        "headers that look like a WARN notice listing (expected something "
+        "like company/employer + date columns). The page structure has "
+        "likely changed -- narrate this live as a source going stale."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -199,12 +279,29 @@ def scrape_trueup_headline() -> dict:
     LIVE scrape of TrueUp.io's /layoffs page for the year-to-date headline
     numbers (total layoffs, people affected, per-day rate). Plain requests +
     BeautifulSoup -- used for the opening hook slide, not the full dataset.
+
+    Confirmed live 2026-08-03: trueup.io sits behind a Cloudflare JS
+    challenge ("Just a moment...") -- every plain-requests attempt gets a
+    403 regardless of User-Agent/Accept headers, because the check requires
+    executing JS to solve, which requests/BeautifulSoup can't do. This is a
+    genuine dead end for this approach (would need a headless browser like
+    Playwright to get past it), not a bug in the parsing logic below.
     """
     from bs4 import BeautifulSoup
-    import re
 
-    resp = requests.get("https://www.trueup.io/layoffs", headers=HEADERS, timeout=REQUEST_TIMEOUT)
-    resp.raise_for_status()
+    try:
+        resp = requests.get("https://www.trueup.io/layoffs", headers=HEADERS, timeout=REQUEST_TIMEOUT)
+        resp.raise_for_status()
+    except requests.exceptions.HTTPError as e:
+        raise RuntimeError(
+            f"trueup.io/layoffs returned {resp.status_code}. As of the last "
+            "check (2026-08-03) this site is behind a Cloudflare JS "
+            "challenge that blocks plain requests entirely -- getting past "
+            "it would require a headless browser (e.g. Playwright), which "
+            "this module deliberately doesn't use. Treat this as a real, "
+            "documented dead end, not a parsing bug."
+        ) from e
+
     text = BeautifulSoup(resp.text, "html.parser").get_text(" ", strip=True)
 
     # Structure is prose-like, not a clean table -- pull numbers with a
@@ -223,11 +320,17 @@ def scrape_trueup_headline() -> dict:
 # Orchestrator: try sources in order, log what happened, never fully die
 # ---------------------------------------------------------------------------
 
-def get_live_tracker_data(airtable_base_id: str = None, warn_state_url: str = None) -> pd.DataFrame:
+def get_live_tracker_data(airtable_base_id: str = None, warn_state_url: str = DEFAULT_WARN_STATE_URL) -> pd.DataFrame:
     """
     Try each live source in order of speed/reliability. Prints what it tried
     and why it moved on -- this narration IS the pedagogical content, so it
     intentionally is not silenced.
+
+    Confirmed live 2026-08-03: with no AIRTABLE_PAT or APIFY_TOKEN set,
+    sources 1 and 2 both fail predictably with clean 401-derived
+    RuntimeErrors (see their docstrings), and source 3 (WARN Act, defaulting
+    to Maryland DLLR) is the one that actually succeeds end-to-end -- this
+    is the realistic fallback path for an unauthenticated demo run.
     """
     attempts = []
 
@@ -269,13 +372,19 @@ def get_live_tracker_data(airtable_base_id: str = None, warn_state_url: str = No
 
 if __name__ == "__main__":
     print("=== Layoff Pulse 2026: live tracker scrape demo ===\n")
-    hook = scrape_trueup_headline()
-    print("Opening hook numbers (raw, unparsed):", hook["raw_numbers_found"], "\n")
+    try:
+        hook = scrape_trueup_headline()
+        print("Opening hook numbers (raw, unparsed):", hook["raw_numbers_found"], "\n")
+    except RuntimeError as e:
+        print(f"Opening hook failed (documented dead end -- narrate live): {e}\n")
 
     df = get_live_tracker_data(
         airtable_base_id=os.environ.get("LAYOFFSFYI_AIRTABLE_BASE"),
-        warn_state_url=os.environ.get("WARN_STATE_URL"),
+        warn_state_url=os.environ.get("WARN_STATE_URL", DEFAULT_WARN_STATE_URL),
     )
     print("\nRaw live sample (first 5 rows):")
     print(df.head())
+
+    os.makedirs("../data/raw", exist_ok=True)
     df.to_csv("../data/raw/tracker_raw_live.csv", index=False)
+    print("\nSaved to ../data/raw/tracker_raw_live.csv")

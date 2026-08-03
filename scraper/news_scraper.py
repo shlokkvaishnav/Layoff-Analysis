@@ -39,9 +39,15 @@ STATED_REASON_PHRASES = [
     "AI", "automation", "macroeconomic", "market conditions", "right-sizing",
 ]
 
+# Confirmed live 2026-08-03: techcrunch.com/feed/ still resolves cleanly.
+# reutersagency.com/feed/?best-topics=tech (the original pick) now 404s --
+# reutersagency.com has become a corporate/agency-services site with no
+# such feed, and reuters.com/technology/rss is blocked by a bot-detection
+# challenge (401, requires JS) that plain requests can't pass. Swapped in
+# CNBC's Technology RSS feed, which resolved fine and also covers layoffs.
 RSS_FEEDS = {
     "techcrunch": "https://techcrunch.com/feed/",
-    "reuters_tech": "https://www.reutersagency.com/feed/?best-topics=tech",
+    "cnbc_tech": "https://www.cnbc.com/id/19854910/device/rss/rss.html",
 }
 
 
@@ -143,4 +149,6 @@ if __name__ == "__main__":
     if not headlines.empty:
         context = build_news_context_table(headlines, max_articles=10)
         print(context[["title", "source", "stated_reasons_found"]])
+        import os
+        os.makedirs("../data/raw", exist_ok=True)
         context.to_csv("../data/raw/news_context_live.csv", index=False)
