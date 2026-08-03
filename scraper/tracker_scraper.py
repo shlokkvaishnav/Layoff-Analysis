@@ -26,11 +26,14 @@ import time
 import json
 import requests
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
+from dotenv import load_dotenv
+
+load_dotenv()
 
 USER_AGENT = "Mozilla/5.0 (compatible; LayoffPulse2026Bot/1.0; DS Club educational project)"
 HEADERS = {"User-Agent": USER_AGENT}
-REQUEST_TIMEOUT = 15
+REQUEST_TIMEOUT = 30
 
 # Confirmed live 2026-08-03: a state WARN page with a genuine server-rendered
 # HTML table of individual notices (not just a PDF/XLSX download, which is
@@ -144,7 +147,7 @@ def scrape_layoffsfyi_airtable(base_id: str = None, table_name: str = "Layoffs")
 
     df = pd.json_normalize([r.get("fields", {}) for r in records])
     df["_source"] = "layoffs.fyi (Airtable, live)"
-    df["_scraped_at"] = datetime.utcnow().isoformat()
+    df["_scraped_at"] = datetime.now(timezone.utc).isoformat()
     return df
 
 
@@ -177,7 +180,7 @@ def scrape_via_apify(actor_id: str = "useful-ai~tech-layoff-intelligence-tracker
     # client timeout needs headroom beyond that.
     run_url = f"https://api.apify.com/v2/acts/{actor_id}/run-sync-get-dataset-items"
     try:
-        resp = requests.get(run_url, params={"token": token}, timeout=300)
+        resp = requests.post(run_url, params={"token": token, "timeout": 300}, timeout=320)
     except requests.exceptions.Timeout:
         raise RuntimeError(
             "Apify actor run timed out client-side after 300s. The actor "
@@ -193,7 +196,7 @@ def scrape_via_apify(actor_id: str = "useful-ai~tech-layoff-intelligence-tracker
 
     df = pd.DataFrame(items)
     df["_source"] = "layoffs.fyi (via Apify actor, live)"
-    df["_scraped_at"] = datetime.utcnow().isoformat()
+    df["_scraped_at"] = datetime.now(timezone.utc).isoformat()
     return df
 
 
@@ -259,7 +262,7 @@ def scrape_warn_act(state_url: str = DEFAULT_WARN_STATE_URL) -> pd.DataFrame:
         headers = " ".join(str(c) for c in df.columns).lower()
         if any(kw in headers for kw in warn_shape_keywords) and len(df) > 1:
             df["_source"] = f"WARN Act ({state_url})"
-            df["_scraped_at"] = datetime.utcnow().isoformat()
+            df["_scraped_at"] = datetime.now(timezone.utc).isoformat()
             return df
 
     raise RuntimeError(
@@ -310,7 +313,7 @@ def scrape_trueup_headline() -> dict:
     numbers = re.findall(r"[\d,]+", text)
     return {
         "_source": "trueup.io (live)",
-        "_scraped_at": datetime.utcnow().isoformat(),
+        "_scraped_at": datetime.now(timezone.utc).isoformat(),
         "raw_numbers_found": numbers[:10],  # hand these to the audience to sanity-check
         "raw_text_snippet": text[:500],
     }
@@ -385,6 +388,10 @@ if __name__ == "__main__":
     print("\nRaw live sample (first 5 rows):")
     print(df.head())
 
-    os.makedirs("../data/raw", exist_ok=True)
-    df.to_csv("../data/raw/tracker_raw_live.csv", index=False)
-    print("\nSaved to ../data/raw/tracker_raw_live.csv")
+    from pathlib import Path
+    out_dir = Path(__file__).resolve().parent.parent / "data" / "raw"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    out_file = out_dir / "tracker_raw_live.csv"
+    df.to_csv(out_file, index=False)
+    print(f"\nSaved to {out_file}")

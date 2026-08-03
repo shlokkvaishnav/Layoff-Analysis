@@ -1,117 +1,129 @@
 """
 eda.py
 ------
-Reusable EDA plotting functions using Plotly, so the live presentation gets
-hover/zoom interactivity instead of static images. Each function returns a
-Plotly figure object -- call .show() on it in the notebook.
-
-Every chart function is paired (in the notebook) with an embedded markdown
-checkpoint question -- these functions just produce the visual; the
-questions live in the notebook cells, deliberately left unanswered.
+Reusable EDA plotting functions using Plotly, updated with a custom Black/Creme Theme.
 """
 
 import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
 
+# Global Theme Settings
+PLOTLY_THEME = "plotly_dark"
+CREME = "#F5F5DC"
+BROWN_CREME = "#D2B48C"
+DARK_BROWN = "#8B5A2B"
+CHARCOAL = "#151515"
+
+def apply_custom_theme(fig: go.Figure):
+    fig.update_layout(
+        template=PLOTLY_THEME,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color=CREME)
+    )
+    return fig
 
 def plot_monthly_trend(df: pd.DataFrame, value_col: str = "laid_off") -> go.Figure:
-    """Total layoffs by month -- the base trend line checkpoint question sits after this."""
     monthly = df.groupby("month", as_index=False)[value_col].sum().sort_values("month")
     fig = px.line(
         monthly, x="month", y=value_col, markers=True,
-        title="Reported Layoffs by Month (Live-Scraped Data)",
+        title="Reported Layoffs by Month",
         labels={"month": "Month", value_col: "People Laid Off"},
+        color_discrete_sequence=[BROWN_CREME]
     )
     fig.update_layout(hovermode="x unified")
-    return fig
-
+    return apply_custom_theme(fig)
 
 def plot_by_sector(df: pd.DataFrame, value_col: str = "laid_off") -> go.Figure:
-    """
-    Layoffs by sector, alongside COMPANY COUNT per sector -- deliberately
-    plotted together so the "is this a real spike or a base-rate artifact
-    of more companies being tracked in that sector?" question has the data
-    it needs sitting right next to it, not hidden in a separate cell.
-    """
     agg = df.groupby("sector").agg(
         total_laid_off=(value_col, "sum"),
         company_count=("company", "nunique"),
     ).reset_index().sort_values("total_laid_off", ascending=False)
 
     fig = go.Figure()
-    fig.add_bar(x=agg["sector"], y=agg["total_laid_off"], name="Total Laid Off", yaxis="y1")
+    fig.add_bar(x=agg["sector"], y=agg["total_laid_off"], name="Total Laid Off", yaxis="y1", marker_color=BROWN_CREME)
     fig.add_scatter(
-        x=agg["sector"], y=agg["company_count"], name="Distinct Companies Tracked",
-        yaxis="y2", mode="markers+lines", marker=dict(size=10),
+        x=agg["sector"], y=agg["company_count"], name="Distinct Companies",
+        yaxis="y2", mode="markers+lines", marker=dict(size=10, color=CREME),
     )
     fig.update_layout(
-        title="Layoffs by Sector vs. Number of Companies Tracked in That Sector",
+        title="Layoffs by Sector vs. Number of Companies Tracked",
         yaxis=dict(title="Total People Laid Off"),
-        yaxis2=dict(title="Distinct Companies Tracked", overlaying="y", side="right"),
-        xaxis=dict(title="Sector", tickangle=-30),
-        legend=dict(orientation="h", y=1.15),
+        yaxis2=dict(title="Companies Tracked", overlaying="y", side="right"),
+        legend=dict(x=0.8, y=0.9),
     )
-    return fig
-
-
-def plot_by_company_size(df: pd.DataFrame, size_col: str = "company_size", value_col: str = "laid_off") -> go.Figure:
-    """Layoffs bucketed by company size band, where size data is available."""
-    if size_col not in df.columns or df[size_col].isna().all():
-        raise ValueError(
-            f"Column '{size_col}' not present or entirely missing -- this source "
-            "may not report company size. Worth noting live as a data-availability gap."
-        )
-    bins = [0, 50, 200, 1000, 5000, float("inf")]
-    labels = ["<50", "50-200", "200-1000", "1000-5000", "5000+"]
-    df = df.copy()
-    df["size_band"] = pd.cut(df[size_col], bins=bins, labels=labels)
-    agg = df.groupby("size_band", as_index=False, observed=True)[value_col].sum()
-    fig = px.bar(
-        agg, x="size_band", y=value_col,
-        title="Layoffs by Company Size Band",
-        labels={"size_band": "Company Size (employees)", value_col: "People Laid Off"},
-    )
-    return fig
-
-
-def plot_by_geography(df: pd.DataFrame, geo_col: str = "location", value_col: str = "laid_off", top_n: int = 15) -> go.Figure:
-    """Top-N geographies by total layoffs -- horizontal bar for label readability."""
-    if geo_col not in df.columns:
-        raise ValueError(f"Column '{geo_col}' not present in this dataset.")
-    agg = (
-        df.groupby(geo_col, as_index=False)[value_col].sum()
-        .sort_values(value_col, ascending=False)
-        .head(top_n)
-    )
-    fig = px.bar(
-        agg.sort_values(value_col), x=value_col, y=geo_col, orientation="h",
-        title=f"Top {top_n} Geographies by Reported Layoffs",
-        labels={value_col: "People Laid Off", geo_col: "Location"},
-    )
-    return fig
-
+    return apply_custom_theme(fig)
 
 def plot_imputed_vs_reported(df: pd.DataFrame, value_col: str = "laid_off") -> go.Figure:
-    """
-    Stacked monthly bar splitting reported vs. imputed headcount numbers.
-    Directly supports the "what would a lazy analysis conclude, and why
-    would it be wrong?" checkpoint -- a lazy read of the monthly trend
-    ignores how much of it is imputed rather than reported.
-    """
     df = df.copy()
     df["source_type"] = df["_headcount_imputed"].map({True: "Imputed", False: "Reported"})
     agg = df.groupby(["month", "source_type"], as_index=False)[value_col].sum()
     fig = px.bar(
         agg, x="month", y=value_col, color="source_type", barmode="stack",
-        title="Monthly Layoffs: Reported vs. Imputed Headcount",
-        labels={"month": "Month", value_col: "People Laid Off", "source_type": "Data Type"},
+        title="Monthly Layoffs: Reported vs. Imputed",
+        color_discrete_map={"Reported": BROWN_CREME, "Imputed": DARK_BROWN}
     )
-    return fig
+    return apply_custom_theme(fig)
 
+def plot_treemap(df: pd.DataFrame, value_col: str = "laid_off") -> go.Figure:
+    plot_df = df.dropna(subset=["sector", "company"]).copy()
+    plot_df = plot_df[plot_df[value_col] > 0]
+    plot_df["sector"] = plot_df["sector"].fillna("Unknown")
+    
+    fig = px.treemap(
+        plot_df, 
+        path=[px.Constant("Layoffs"), "sector", "company"], 
+        values=value_col,
+        title="Layoffs Breakdown: Sector vs Company",
+        color=value_col,
+        color_continuous_scale=[CREME, BROWN_CREME, DARK_BROWN]
+    )
+    fig.update_traces(
+        root_color=CHARCOAL,
+        textfont=dict(color="black", size=14),
+        marker=dict(line=dict(width=2, color=CHARCOAL))
+    )
+    fig.update_layout(margin=dict(t=50, l=25, r=25, b=25))
+    return apply_custom_theme(fig)
+
+def plot_moving_average(df: pd.DataFrame, value_col: str = "laid_off", window_days: int = 30) -> go.Figure:
+    daily = df.groupby("date", as_index=False)[value_col].sum().sort_values("date")
+    daily["MA"] = daily[value_col].rolling(window=window_days, min_periods=1).mean()
+    
+    fig = go.Figure()
+    fig.add_scatter(x=daily["date"], y=daily[value_col], mode="markers", opacity=0.4, name="Daily Spikes", marker=dict(color="gray"))
+    fig.add_scatter(x=daily["date"], y=daily["MA"], mode="lines", name=f"{window_days}-Day Moving Average", line=dict(color=BROWN_CREME, width=3))
+    
+    fig.update_layout(
+        title=f"Layoffs Timeline ({window_days}-Day Moving Average)",
+        xaxis_title="Date",
+        yaxis_title="People Laid Off",
+        hovermode="x unified"
+    )
+    return apply_custom_theme(fig)
+
+def plot_imputation_breakdown(df: pd.DataFrame, value_col: str = "laid_off") -> go.Figure:
+    df = df.copy()
+    df["source_type"] = df["_headcount_imputed"].map({True: "Imputed", False: "Reported"})
+    agg = df.groupby("source_type", as_index=False)[value_col].sum()
+    
+    fig = px.pie(
+        agg, names="source_type", values=value_col, hole=0.4,
+        title="Data Integrity: Reported vs Imputed",
+        color="source_type",
+        color_discrete_map={"Reported": BROWN_CREME, "Imputed": DARK_BROWN}
+    )
+    return apply_custom_theme(fig)
 
 if __name__ == "__main__":
-    df = pd.read_csv("../data/cleaned/tracker_cleaned.csv")
+    from pathlib import Path
+    clean_path = Path(__file__).resolve().parent.parent / "data" / "cleaned" / "tracker_cleaned.csv"
+    if not clean_path.exists():
+        print(f"Error: {clean_path} not found.")
+        exit(1)
+    df = pd.read_csv(clean_path)
+    df["date"] = pd.to_datetime(df["date"])
+    
     plot_monthly_trend(df).show()
-    plot_by_sector(df).show()
-    plot_imputed_vs_reported(df).show()
+    plot_treemap(df).show()

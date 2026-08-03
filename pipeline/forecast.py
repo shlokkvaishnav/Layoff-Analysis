@@ -87,29 +87,38 @@ def arima_forecast(series: pd.Series, horizon: int = 3, order=(1, 1, 1)) -> pd.D
 def plot_forecast_comparison(series: pd.Series, naive_fc: pd.DataFrame, arima_fc: pd.DataFrame, sector: str) -> go.Figure:
     """
     Plot historical series + both forecasts with visible uncertainty bands.
-    Bands are drawn as filled areas, not just error bars, so the widening
-    (or non-widening) uncertainty is immediately visually obvious.
+    Uses Black and Brown Creme custom theme styling.
     """
+    CREME = "#F5F5DC"
+    BROWN_CREME = "#D2B48C"
+    
     fig = go.Figure()
 
     fig.add_scatter(x=series.index, y=series.values, name="Historical", mode="lines+markers",
-                     line=dict(color="black"))
+                     line=dict(color=CREME, width=3))
 
-    for fc, color in [(naive_fc, "orange"), (arima_fc, "royalblue")]:
+    for fc, color in [(naive_fc, "gray"), (arima_fc, BROWN_CREME)]:
         model_name = fc["model"].iloc[0]
         fig.add_scatter(x=fc["date"], y=fc["forecast"], name=f"{model_name} forecast",
-                         mode="lines+markers", line=dict(color=color, dash="dash"))
-        fig.add_scatter(
-            x=pd.concat([fc["date"], fc["date"][::-1]]),
-            y=pd.concat([fc["upper"], fc["lower"][::-1]]),
-            fill="toself", fillcolor=color, opacity=0.15,
-            line=dict(width=0), showlegend=True, name=f"{model_name} 95% band",
-        )
+                         mode="lines+markers", line=dict(color=color, dash="dash", width=3))
+        
+        # Only add confidence interval for ARIMA or if it exists
+        if model_name != "Naive":
+            fig.add_scatter(
+                x=pd.concat([fc["date"], fc["date"][::-1]]),
+                y=pd.concat([fc["upper"], fc["lower"][::-1]]),
+                fill="toself", fillcolor=color, opacity=0.3,
+                line=dict(color='rgba(255,255,255,0)'), showlegend=True, name=f"{model_name} 95% band",
+            )
 
     fig.update_layout(
-        title=f"Layoff Forecast Comparison — {sector} (Naive Baseline vs ARIMA)",
+        title=f"Layoff Forecast Comparison — {sector} (Naive vs ARIMA)",
         xaxis_title="Month", yaxis_title="People Laid Off",
         hovermode="x unified",
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color=CREME)
     )
     return fig
 
@@ -152,7 +161,12 @@ def confidence_audit(series: pd.Series, sector: str) -> dict:
 
 
 if __name__ == "__main__":
-    df = pd.read_csv("../data/cleaned/tracker_cleaned.csv")
+    from pathlib import Path
+    clean_path = Path(__file__).resolve().parent.parent / "data" / "cleaned" / "tracker_cleaned.csv"
+    if not clean_path.exists():
+        print(f"Error: {clean_path} not found.")
+        exit(1)
+    df = pd.read_csv(clean_path)
     top_sector = df.groupby("sector")["laid_off"].sum().idxmax()
     series = prepare_monthly_series(df, top_sector)
 

@@ -156,6 +156,12 @@ def clean_tracker_dataframe(raw_df: pd.DataFrame,
     """
     df = raw_df.copy()
 
+    # Intelligent schema detection for fallback sources like WARN
+    if "company" not in df.columns and "Company" in df.columns:
+        company_col = "Company"
+        date_col = "Notice Date"
+        headcount_col = "Total  Employees"
+
     # Best-effort column renaming since raw column names differ across
     # sources (Airtable field names vs Apify actor output vs WARN tables).
     rename_candidates = {
@@ -193,28 +199,25 @@ def clean_tracker_dataframe(raw_df: pd.DataFrame,
 if __name__ == "__main__":
     import os
 
-    raw = pd.read_csv("../data/raw/tracker_raw_live.csv")
+    from pathlib import Path
+    
+    root_dir = Path(__file__).resolve().parent.parent
+    raw_path = root_dir / "data" / "raw" / "tracker_raw_live.csv"
+    
+    if not raw_path.exists():
+        print(f"Error: Could not find {raw_path}")
+        exit(1)
+        
+    raw = pd.read_csv(raw_path)
 
-    # Column names here match whichever live source actually produced
-    # ../data/raw/tracker_raw_live.csv (see get_live_tracker_data()'s
-    # fallback order in tracker_scraper.py). Confirmed live 2026-08-03: with
-    # no AIRTABLE_PAT/APIFY_TOKEN set, that source is WARN Act (Maryland
-    # DLLR), whose real column names are 'Company' / 'Notice Date' /
-    # 'Total  Employees' -- nothing resembling 'sector', so sector standardizes
-    # to "Unknown" for every row, which is an honest reflection of what WARN
-    # filings actually report (industry NAICS code, not a marketing sector).
-    column_map = dict(company_col="Company", date_col="Notice Date",
-                       sector_col="sector", headcount_col="Total  Employees")
-    if "company" in raw.columns:  # Airtable/Apify-shaped data instead
-        column_map = dict(company_col="company", date_col="date",
-                           sector_col="sector", headcount_col="laid_off")
-
-    cleaned = clean_tracker_dataframe(raw, **column_map)
+    cleaned = clean_tracker_dataframe(raw)
     print(f"Cleaned {len(cleaned)} rows from {len(raw)} raw rows.")
     print(f"Rows with imputed headcount: {cleaned['_headcount_imputed'].sum()}")
     print(f"Distinct companies after fuzzy dedupe: {cleaned['company'].nunique()} "
           f"(from {cleaned['company_original'].nunique()} original name variants)")
 
-    os.makedirs("../data/cleaned", exist_ok=True)
-    cleaned.to_csv("../data/cleaned/tracker_cleaned.csv", index=False)
-    print("Saved to ../data/cleaned/tracker_cleaned.csv")
+    out_dir = root_dir / "data" / "cleaned"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_file = out_dir / "tracker_cleaned.csv"
+    cleaned.to_csv(out_file, index=False)
+    print(f"Saved to {out_file}")
