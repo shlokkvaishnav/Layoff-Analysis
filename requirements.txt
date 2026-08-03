@@ -1,0 +1,11 @@
+requests
+beautifulsoup4
+feedparser
+lxml
+pandas
+numpy
+rapidfuzz
+plotly
+statsmodels
+ipywidgets
+streamlit
