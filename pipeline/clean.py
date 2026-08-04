@@ -156,11 +156,21 @@ def clean_tracker_dataframe(raw_df: pd.DataFrame,
     """
     df = raw_df.copy()
 
-    # Intelligent schema detection for fallback sources like WARN
+    # Intelligent schema detection across live sources -- confirmed live
+    # 2026-08-04: layoffs.fyi's real Airtable shared-view schema is
+    # 'Company' / 'Date' / 'Industry' / '# Laid Off'; the WARN Act fallback
+    # (Maryland DLLR) uses 'Company' / 'Notice Date' / 'Total  Employees'
+    # with no sector field at all (WARN filings report a NAICS code, not a
+    # marketing-style sector).
     if "company" not in df.columns and "Company" in df.columns:
         company_col = "Company"
-        date_col = "Notice Date"
-        headcount_col = "Total  Employees"
+        if "Industry" in df.columns:
+            date_col = "Date"
+            sector_col = "Industry"
+            headcount_col = "# Laid Off"
+        else:
+            date_col = "Notice Date"
+            headcount_col = "Total  Employees"
 
     # Best-effort column renaming since raw column names differ across
     # sources (Airtable field names vs Apify actor output vs WARN tables).

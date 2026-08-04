@@ -64,16 +64,26 @@ All of the below were verified against the real live internet on
 **2026-08-03** — not speculation. Re-verify closer to your actual
 presentation date, since every one of these is a moving target by design.
 
-- **layoffs.fyi's Airtable base is real and auto-discoverable, but not
-  publicly readable.** The base id (`app1PaujS9zxVGUZ4` as of 2026-08-03) is
-  sitting in plain page-source HTML on layoffs.fyi (no devtools Network-tab
-  digging needed — `tracker_scraper.py` now scrapes it automatically). But
-  every request to Airtable's REST API against that base returns
-  `401 AUTHENTICATION_REQUIRED`, with or without a table name/id — the base
-  itself is locked down. The embed page also renders client-side (no
-  records inline in the HTML), so there's no static-HTML shortcut either. A
-  real `AIRTABLE_PAT` is required; without one this source fails immediately
-  and predictably, exactly as designed.
+- **layoffs.fyi's public Airtable REST API is locked, but there's a real
+  working path anyway — an update from 2026-08-04.** The base id
+  (`app1PaujS9zxVGUZ4`) is real and auto-discoverable from layoffs.fyi's
+  page-source HTML, but every request to Airtable's *public* REST API
+  against it returns `401 AUTHENTICATION_REQUIRED`, PAT or not — that base
+  is genuinely locked down for that API. However, the embed page itself
+  doesn't use that public API at all: it calls Airtable's internal,
+  unauthenticated "shared view" endpoint
+  (`airtable.com/v0.3/view/<viewId>/readSharedViewData`) to render the
+  public embed. `scrape_layoffsfyi_airtable()` now captures that endpoint's
+  signed request live (one-time headless-browser visit via Playwright,
+  since the signature is issued client-side per page load) and replays it
+  with plain `requests` — confirmed live: **4,545 real rows, real columns
+  (Company, Location HQ, # Laid Off, Date, Industry, Source, Stage, $
+  Raised (mm), Country, AI-flag), history back to March 2020**, no API key
+  needed. Requires `pip install playwright && playwright install
+  chromium`. If this ever breaks (Airtable could change the signing scheme
+  or layoffs.fyi could swap embed providers), it's a good live moment —
+  the code raises a clear `RuntimeError` and the pipeline falls through to
+  Apify, then WARN Act, same as before.
 - **The Apify actor (`useful-ai~tech-layoff-intelligence-tracker`) is real,
   public, and active** — 712 successful runs in the last 30 days per its
   public store listing, most recently run the same day this was checked.

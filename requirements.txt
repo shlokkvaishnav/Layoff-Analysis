@@ -10,3 +10,4 @@ statsmodels
 ipywidgets
 streamlit
 python-dotenv
+playwright  # needed only for scrape_layoffsfyi_airtable()'s shared-view path; run `playwright install chromium` once after pip install

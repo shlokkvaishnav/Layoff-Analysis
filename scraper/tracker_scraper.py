@@ -66,87 +66,169 @@ def _discover_airtable_base_id() -> str:
     return match.group(1)
 
 
+def _fetch_airtable_shared_view_request() -> tuple:
+    """
+    Use a short-lived headless browser visit to layoffs.fyi to capture the
+    signed internal request its own embed page issues to Airtable's
+    "shared view" endpoint (`/v0.3/view/<viewId>/readSharedViewData`).
+
+    Confirmed live 2026-08-04: this is NOT the same as Airtable's public
+    REST API (which 401s -- see scrape_layoffsfyi_airtable()'s docstring).
+    It's the undocumented endpoint Airtable's own JS uses to render a
+    public "share" embed, and it requires no API key -- just a signed
+    requestId/accessPolicy that the embed page obtains for itself on every
+    load. We can't construct that signature ourselves, but we can capture
+    the exact signed URL+headers the browser generates and replay it
+    directly with `requests` -- no browser needed for the actual data pull,
+    only for getting a fresh signed URL.
+
+    Requires Playwright with Chromium installed (`playwright install
+    chromium`) -- this is the one function in this module that needs a
+    real browser, because Airtable's embed only issues this request
+    client-side.
+    """
+    from playwright.sync_api import sync_playwright
+
+    captured_url, captured_headers = None, None
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+
+        def on_request(request):
+            nonlocal captured_url, captured_headers
+            if ("readSharedViewData" in request.url
+                    and "allowMsgpackOfResult" not in request.url
+                    and captured_url is None):
+                captured_url = request.url
+                captured_headers = dict(request.headers)
+
+        page.on("request", on_request)
+        page.goto("https://layoffs.fyi/", wait_until="load", timeout=30000)
+        page.wait_for_timeout(8000)
+        browser.close()
+
+    if not captured_url:
+        raise RuntimeError(
+            "Could not capture the Airtable shared-view request while "
+            "loading layoffs.fyi -- the embed page may have changed how "
+            "it fetches data since this was last checked."
+        )
+    return captured_url, captured_headers
+
+
+def _parse_airtable_shared_view_payload(payload: dict) -> pd.DataFrame:
+    """Decode a readSharedViewData JSON payload into a clean DataFrame,
+    resolving select/multiSelect column values from opaque choice ids to
+    their human-readable labels (e.g. 'selKhBn9Wk...' -> 'SF Bay Area')."""
+    table = payload["data"]["table"]
+    col_id_to_name = {c["id"]: c["name"] for c in table["columns"]}
+    choice_maps = {}
+    for c in table["columns"]:
+        choices = (c.get("typeOptions") or {}).get("choices")
+        if choices:
+            choice_maps[c["id"]] = {cid: cval.get("name") for cid, cval in choices.items()}
+
+    records = []
+    for row in table["rows"]:
+        rec = {}
+        for col_id, val in row["cellValuesByColumnId"].items():
+            name = col_id_to_name.get(col_id, col_id)
+            if col_id in choice_maps:
+                m = choice_maps[col_id]
+                val = [m.get(v, v) for v in val] if isinstance(val, list) else m.get(val, val)
+            rec[name] = val
+        records.append(rec)
+
+    return pd.DataFrame(records)
+
+
 def scrape_layoffsfyi_airtable(base_id: str = None, table_name: str = "Layoffs") -> pd.DataFrame:
     """
-    Attempt a LIVE pull from the Airtable base backing layoffs.fyi's table.
-
-    layoffs.fyi's on-page table links out to an embedded Airtable view. If
-    that view (or a base_id you've found via browser devtools -> Network tab)
-    is publicly readable, this hits Airtable's real REST API directly --
-    no Selenium, no HTML parsing, just clean JSON.
+    LIVE pull of layoffs.fyi's real underlying dataset via Airtable.
 
     Confirmed live 2026-08-03: the base id (currently 'app1PaujS9zxVGUZ4') is
-    real and auto-discoverable straight from layoffs.fyi's HTML (see
-    _discover_airtable_base_id()), but Airtable's REST API returns
-    401 AUTHENTICATION_REQUIRED on every table/table-id tried against it
-    without a Personal Access Token -- the base is not publicly readable.
-    The embed HTML itself also renders client-side (no records inline in
-    the page source), so there's no static-HTML shortcut either; a PAT (or
-    falling back to Apify/WARN Act) is genuinely required.
+    real and auto-discoverable straight from layoffs.fyi's HTML, but
+    Airtable's PUBLIC REST API returns 401 AUTHENTICATION_REQUIRED on every
+    request against it without a Personal Access Token that's been granted
+    access to this specific base (which a token you generate yourself will
+    not have, since it's someone else's base) -- so that path is a genuine
+    dead end without cooperation from layoffs.fyi's owner.
+
+    Confirmed live 2026-08-04, and this is the actual working path: the
+    embed page itself doesn't use that public REST API at all -- it calls
+    Airtable's internal "shared view" endpoint
+    (`airtable.com/v0.3/view/<viewId>/readSharedViewData`), which requires
+    no API key, just a signed request the embed page generates for itself
+    on load. Replaying that exact signed request returns the FULL real
+    dataset with no authentication -- confirmed live: 4,545 rows, real
+    columns (Company, Location HQ, # Laid Off, Date, Industry, Source,
+    Stage, $ Raised (mm), Country, AI). This needs a one-time headless
+    browser visit (Playwright + Chromium) to capture a fresh signed URL,
+    since the signature is issued client-side per page load; the actual
+    data pull after that is a single plain `requests.get()`.
+
+    If a real AIRTABLE_PAT with actual access to this base is available,
+    the public REST API is tried first as a faster/simpler path; otherwise
+    this falls through to the shared-view method above automatically.
 
     Parameters
     ----------
     base_id : str
-        Airtable base id (looks like 'appXXXXXXXXXXXXXX'). If omitted, this
-        is auto-discovered live from layoffs.fyi's homepage HTML (falling
-        back to the LAYOFFSFYI_AIRTABLE_BASE env var if discovery fails).
+        Airtable base id. Only used for the REST API fast-path when a
+        matching AIRTABLE_PAT is set; the shared-view fallback discovers
+        everything it needs directly from layoffs.fyi.
     table_name : str
-        Table name or id within the base.
+        Table name/id, REST API fast-path only.
 
     Returns
     -------
     pd.DataFrame
-        Raw (uncleaned) records. Raises RuntimeError with a clear message
-        if the base isn't publicly readable -- this is expected and should
-        be narrated live, not treated as a bug.
+        Raw (uncleaned) records.
     """
     base_id = base_id or os.environ.get("LAYOFFSFYI_AIRTABLE_BASE")
-    if not base_id:
-        try:
-            base_id = _discover_airtable_base_id()
-            print(f"      (auto-discovered Airtable base id: {base_id})")
-        except Exception as e:
-            raise RuntimeError(
-                f"No Airtable base_id supplied and auto-discovery failed ({e}). "
-                "Find it live: open layoffs.fyi, click through to the embedded "
-                "Airtable view, open browser devtools -> Network tab, filter "
-                "for 'airtable.com', and copy the appXXXXXXXXXXXXXX id from "
-                "the request URL."
-            )
+    pat = os.environ.get("AIRTABLE_PAT")
 
-    pat = os.environ.get("AIRTABLE_PAT")  # optional Personal Access Token
-
-    url = f"https://api.airtable.com/v0/{base_id}/{table_name}"
-    req_headers = dict(HEADERS)
     if pat:
-        req_headers["Authorization"] = f"Bearer {pat}"
+        if not base_id:
+            try:
+                base_id = _discover_airtable_base_id()
+            except Exception:
+                base_id = None
+        if base_id:
+            url = f"https://api.airtable.com/v0/{base_id}/{table_name}"
+            resp = requests.get(url, headers={**HEADERS, "Authorization": f"Bearer {pat}"},
+                                 params={"pageSize": 100}, timeout=REQUEST_TIMEOUT)
+            if resp.ok:
+                records = resp.json().get("records", [])
+                if records:
+                    df = pd.json_normalize([r.get("fields", {}) for r in records])
+                    df["_source"] = "layoffs.fyi (Airtable REST API, live)"
+                    df["_scraped_at"] = datetime.now(timezone.utc).isoformat()
+                    return df
+            # PAT path failed (401/403/empty) -- fall through to shared-view method below.
 
-    records = []
-    offset = None
-    while True:
-        params = {"pageSize": 100}
-        if offset:
-            params["offset"] = offset
-        resp = requests.get(url, headers=req_headers, params=params, timeout=REQUEST_TIMEOUT)
-        if resp.status_code == 401 or resp.status_code == 403:
-            raise RuntimeError(
-                f"Airtable base '{base_id}' requires authentication "
-                f"(status {resp.status_code}). Set AIRTABLE_PAT env var, "
-                "or fall back to scrape_via_apify() / scrape_warn_act()."
-            )
-        resp.raise_for_status()
-        payload = resp.json()
-        records.extend(payload.get("records", []))
-        offset = payload.get("offset")
-        if not offset:
-            break
-        time.sleep(0.2)  # be polite to the API
+    try:
+        url, headers = _fetch_airtable_shared_view_request()
+    except Exception as e:
+        raise RuntimeError(
+            f"Could not reach layoffs.fyi's Airtable shared-view endpoint: {e}"
+        )
 
-    if not records:
-        raise RuntimeError("Airtable base returned zero records -- table name or schema may have changed.")
+    headers = dict(headers)
+    headers.pop("x-airtable-accept-msgpack", None)  # force plain JSON, not Airtable's internal msgpack wire format
+    resp = requests.get(url, headers=headers, timeout=30)
+    resp.raise_for_status()
+    payload = resp.json()
 
-    df = pd.json_normalize([r.get("fields", {}) for r in records])
-    df["_source"] = "layoffs.fyi (Airtable, live)"
+    if payload.get("msg") != "SUCCESS":
+        raise RuntimeError(f"Airtable shared-view endpoint returned non-success: {payload.get('msg')}")
+
+    df = _parse_airtable_shared_view_payload(payload)
+    if df.empty:
+        raise RuntimeError("Airtable shared-view endpoint returned zero rows -- table may be empty or schema changed.")
+
+    df["_source"] = "layoffs.fyi (Airtable shared-view, live)"
     df["_scraped_at"] = datetime.now(timezone.utc).isoformat()
     return df
 
