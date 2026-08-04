@@ -304,6 +304,18 @@ def scrape_trueup_headline() -> dict:
             "this module deliberately doesn't use. Treat this as a real, "
             "documented dead end, not a parsing bug."
         ) from e
+    except requests.exceptions.RequestException as e:
+        # Catches ConnectionError/Timeout/etc -- anything that fails before a
+        # response even comes back (SSL resets, DNS failures, network blocks).
+        # Narrating live: these look identical to the Cloudflare block above
+        # from the caller's side, but happen at a different layer.
+        raise RuntimeError(
+            f"Request to trueup.io/layoffs failed before a response came "
+            f"back ({e.__class__.__name__}: {e}). Could be a network-level "
+            "block, timeout, or the Cloudflare challenge failing even "
+            "earlier than usual -- either way, treat as a live source "
+            "failure and move on."
+        ) from e
 
     text = BeautifulSoup(resp.text, "html.parser").get_text(" ", strip=True)
 
