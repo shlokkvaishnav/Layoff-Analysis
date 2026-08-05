@@ -1,0 +1,68 @@
+name: Refresh Layoff Data
+
+on:
+  schedule:
+    - cron: "0 13 * * *" # daily at 13:00 UTC
+  workflow_dispatch: {}
+
+concurrency:
+  group: refresh-data
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # scraper/tracker_scraper.py's primary source (layoffs.fyi's Airtable
+      # shared-view) needs a one-time headless-browser visit to capture a
+      # signed URL, then a single plain, unauthenticated GET -- no API
+      # tokens required. This is the source that produced the dataset
+      # already committed to this repo.
+      - name: Install Playwright's Chromium
+        run: playwright install --with-deps chromium
+
+      # No secrets required for the primary (Airtable shared-view) or
+      # fallback (WARN Act) sources -- both are free and token-less. If you
+      # later want the optional Apify fallback for extra resilience, add an
+      # APIFY_TOKEN repo secret and pass it here; it's intentionally omitted
+      # by default so this workflow has zero external-API dependencies.
+      - name: Run data refresh
+        run: python scripts/refresh_data.py
+
+      # If every source failed, refresh_data.py already exited non-zero
+      # above and the job stopped -- nothing below runs, so last known-good
+      # data stays committed untouched.
+      - name: Commit and push if data changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/raw data/cleaned
+          if git diff --cached --quiet; then
+            echo "No data changes to commit."
+          else
+            git commit -m "chore: scheduled data refresh $(date -u +'%Y-%m-%d')"
+            git push
+          fi
+
+      # Belt-and-suspenders: Render's own "Auto-Deploy on push" (default-on)
+      # already picks up the git push above. This only matters if that ever
+      # gets disabled. Skipped entirely when the secret isn't set.
+      - name: Trigger Render deploy (optional)
+        if: ${{ env.RENDER_DEPLOY_HOOK_URL != '' }}
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL"

@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+:root {
+  --background: #faf9f6;
+  --foreground: #171412;
+  --muted: #6b645c;
+  --card: #ffffff;
+  --border: #e5e0d8;
+  --accent: #8b5a2b;
+  --accent-strong: #6f4726;
+}
+
+:root[data-theme="dark"] {
+  --background: #121110;
+  --foreground: #f0ece4;
+  --muted: #a89e91;
+  --card: #1a1817;
+  --border: #34302a;
+  --accent: #d2b48c;
+  --accent-strong: #e8cda3;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --background: #121110;
+    --foreground: #f0ece4;
+    --muted: #a89e91;
+    --card: #1a1817;
+    --border: #34302a;
+    --accent: #d2b48c;
+    --accent-strong: #e8cda3;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+}
+
+.text-muted {
+  color: var(--muted);
+}
+
+.glass {
+  background: color-mix(in srgb, var(--card) 55%, transparent);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}

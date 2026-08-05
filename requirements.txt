@@ -1,13 +1,11 @@
-requests
-beautifulsoup4
-feedparser
-lxml
-pandas
-numpy
-rapidfuzz
-plotly
-statsmodels
-ipywidgets
-streamlit
-python-dotenv
-playwright  # needed only for scrape_layoffsfyi_airtable()'s shared-view path; run `playwright install chromium` once after pip install
+requests==2.34.2
+beautifulsoup4==4.15.0
+feedparser==6.0.14
+lxml==6.1.1
+pandas==2.3.3
+numpy==2.4.6
+rapidfuzz==3.14.5
+plotly==6.8.0
+statsmodels==0.14.6
+python-dotenv==1.2.2
+playwright==1.60.0  # needed only for scrape_layoffsfyi_airtable()'s shared-view path; run `playwright install chromium` once after pip install

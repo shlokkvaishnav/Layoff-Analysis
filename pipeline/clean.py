@@ -60,6 +60,75 @@ def standardize_date(raw_date) -> pd.Timestamp:
     return pd.to_datetime(raw_date, errors="coerce", utc=False)
 
 
+# Unlike sector, layoffs.fyi's raw Stage field is well-populated and not
+# dominated by a catch-all bucket -- kept as an exact lookup (no fuzzy
+# fallback needed) since the raw value set is small and stable. The thin
+# tail of later rounds (Series E through J) is folded into "Series E+" to
+# keep per-bucket sample sizes meaningful for trend/forecast use.
+STAGE_STANDARDIZATION_MAP = {
+    "pre-seed": "Seed",
+    "seed": "Seed",
+    "series a": "Series A",
+    "series b": "Series B",
+    "series c": "Series C",
+    "series d": "Series D",
+    "series e": "Series E+",
+    "series f": "Series E+",
+    "series g": "Series E+",
+    "series h": "Series E+",
+    "series i": "Series E+",
+    "series j": "Series E+",
+    "post-ipo": "Public",
+    "ipo": "Public",
+    "public": "Public",
+    "acquired": "Acquired",
+    "private equity": "Private Equity",
+    "subsidiary": "Subsidiary",
+}
+
+
+def standardize_stage(raw_stage) -> str:
+    """Map a raw funding-Stage string to the compact bucket set above."""
+    if pd.isna(raw_stage) or not str(raw_stage).strip():
+        return "Unknown"
+    key = str(raw_stage).strip().lower()
+    return STAGE_STANDARDIZATION_MAP.get(key, "Unknown")
+
+
+def standardize_ai_flag(raw_ai):
+    """
+    Map layoffs.fyi's AI tag ('Yes'/'No'/missing) to a nullable boolean.
+    Left as pd.NA when missing rather than coerced to False -- this field is
+    only ~14% populated, and missing means "not tagged", not "confirmed
+    non-AI". Treating pd.NA as False would silently manufacture a "not an
+    AI layoff" claim for rows that were simply never reviewed.
+    """
+    if pd.isna(raw_ai):
+        return pd.NA
+    key = str(raw_ai).strip().lower()
+    if key == "yes":
+        return True
+    if key == "no":
+        return False
+    return pd.NA
+
+
+def clean_location_hq(raw_value):
+    """
+    Normalize layoffs.fyi's Location HQ field to plain text. This field
+    arrives as a genuine Python list (Airtable multi-select) on a fresh
+    in-memory scrape, but as a list-literal-formatted string (e.g.
+    "['SF Bay Area']") once it's been round-tripped through a CSV -- both
+    shapes are handled here since pipeline/reasons and this module get called
+    on data in either form depending on the caller (see scripts/refresh_data.py).
+    """
+    if isinstance(raw_value, list):
+        return ", ".join(str(v) for v in raw_value) if raw_value else np.nan
+    if pd.isna(raw_value):
+        return np.nan
+    return re.sub(r"[\[\]']", "", str(raw_value)).strip()
+
+
 def dedupe_company_names(df: pd.DataFrame, name_col: str = "company", threshold: int = 85) -> pd.DataFrame:
     """
     Fuzzy-dedupe company name variants (e.g. 'Meta' vs 'Meta Platforms Inc.')
@@ -181,6 +250,23 @@ def clean_tracker_dataframe(raw_df: pd.DataFrame,
         headcount_col: "laid_off",
     }
     df = df.rename(columns={k: v for k, v in rename_candidates.items() if k in df.columns})
+
+    # Additional structured dimensions -- only present in the Airtable-shaped
+    # source (layoffs.fyi), not in WARN Act filings, so each is guarded on
+    # its raw column actually being present rather than assumed to exist.
+    # These exist so trend/reason/forecast analysis has reliable dimensions
+    # to fall back on instead of leaning on "sector", which is dominated by
+    # an uninformative "Other" catch-all (~12% of total headcount).
+    if "Stage" in df.columns:
+        df["stage"] = df["Stage"].apply(standardize_stage)
+    if "AI" in df.columns:
+        df["ai_flag"] = df["AI"].apply(standardize_ai_flag).astype("boolean")
+    if "Country" in df.columns:
+        df["country"] = df["Country"]
+    if "Location HQ" in df.columns:
+        df["location_hq"] = df["Location HQ"].apply(clean_location_hq)
+    if "$ Raised (mm)" in df.columns:
+        df["funds_raised_mm"] = pd.to_numeric(df["$ Raised (mm)"], errors="coerce")
 
     for required in ["company", "date", "sector", "laid_off"]:
         if required not in df.columns:

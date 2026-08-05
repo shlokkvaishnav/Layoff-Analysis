@@ -22,11 +22,24 @@ import warnings
 warnings.filterwarnings("ignore")  # ARIMA convergence warnings are noisy in a live demo
 
 
-def prepare_monthly_series(df: pd.DataFrame, sector: str, value_col: str = "laid_off") -> pd.Series:
-    """Build a monthly time series for a single sector, filling gap months with 0."""
-    sub = df[df["sector"] == sector].copy()
+def prepare_monthly_series(df: pd.DataFrame, group_col: str = None, group_value: str = None,
+                            value_col: str = "laid_off") -> pd.Series:
+    """
+    Build a monthly time series, filling gap months with 0. With no
+    group_col/group_value, this is the overall/national series across the
+    whole dataset -- the headline forecast, since it isn't thinned out by a
+    segmentation. Pass e.g. group_col="stage", group_value="Series B" for a
+    per-cohort series instead (sector remains a valid group_col too, just no
+    longer the default).
+    """
+    if group_col is not None:
+        sub = df[df[group_col] == group_value].copy()
+        label = f"{group_col}='{group_value}'"
+    else:
+        sub = df.copy()
+        label = "overall"
     if sub.empty:
-        raise ValueError(f"No rows found for sector '{sector}'.")
+        raise ValueError(f"No rows found for {label}.")
     sub["month"] = pd.to_datetime(sub["month"])
     monthly = sub.groupby("month")[value_col].sum().sort_index()
     full_range = pd.date_range(monthly.index.min(), monthly.index.max(), freq="MS")
@@ -84,9 +97,11 @@ def arima_forecast(series: pd.Series, horizon: int = 3, order=(1, 1, 1)) -> pd.D
     return forecast
 
 
-def plot_forecast_comparison(series: pd.Series, naive_fc: pd.DataFrame, arima_fc: pd.DataFrame, sector: str) -> go.Figure:
+def plot_forecast_comparison(series: pd.Series, naive_fc: pd.DataFrame, arima_fc: pd.DataFrame, label: str) -> go.Figure:
     """
     Plot historical series + both forecasts with visible uncertainty bands.
+    `label` names whatever segment `series` represents (e.g. "overall",
+    a sector, or a funding stage) for the chart title.
     Uses Black and Brown Creme custom theme styling.
     """
     CREME = "#F5F5DC"
@@ -112,7 +127,7 @@ def plot_forecast_comparison(series: pd.Series, naive_fc: pd.DataFrame, arima_fc
             )
 
     fig.update_layout(
-        title=f"Layoff Forecast Comparison — {sector} (Naive vs ARIMA)",
+        title=f"Layoff Forecast Comparison — {label} (Naive vs ARIMA)",
         xaxis_title="Month", yaxis_title="People Laid Off",
         hovermode="x unified",
         template="plotly_dark",
@@ -123,7 +138,7 @@ def plot_forecast_comparison(series: pd.Series, naive_fc: pd.DataFrame, arima_fc
     return fig
 
 
-def confidence_audit(series: pd.Series, sector: str) -> dict:
+def confidence_audit(series: pd.Series, label: str) -> dict:
     """
     Produce a structured list of assumptions the forecast rests on, and a
     rough flag for how shaky each one is given the actual data at hand.
@@ -132,7 +147,7 @@ def confidence_audit(series: pd.Series, sector: str) -> dict:
     """
     n_months = len(series)
     audit = {
-        "sector": sector,
+        "label": label,
         "months_of_history": n_months,
         "assumptions": [
             {
@@ -141,13 +156,13 @@ def confidence_audit(series: pd.Series, sector: str) -> dict:
                 "risk_level": "HIGH",
             },
             {
-                "assumption": "Tracker coverage of this sector is stable over time",
-                "shaky_if": "The tracker started covering this sector more/less completely partway through the window",
+                "assumption": "Tracker coverage of this segment is stable over time",
+                "shaky_if": "The tracker started covering this segment more/less completely partway through the window",
                 "risk_level": "MEDIUM",
             },
             {
                 "assumption": "Series has enough history for the model to fit meaningfully",
-                "shaky_if": n_months < 12,
+                "shaky_if": "Fewer than 12 months of history -- ARIMA's fit gets progressively less reliable below that",
                 "risk_level": "HIGH" if n_months < 6 else ("MEDIUM" if n_months < 12 else "LOW"),
             },
             {
@@ -167,8 +182,7 @@ if __name__ == "__main__":
         print(f"Error: {clean_path} not found.")
         exit(1)
     df = pd.read_csv(clean_path)
-    top_sector = df.groupby("sector")["laid_off"].sum().idxmax()
-    series = prepare_monthly_series(df, top_sector)
+    series = prepare_monthly_series(df)  # overall/national series -- the new headline
 
     naive_fc = naive_baseline_forecast(series, horizon=3)
     try:
@@ -178,10 +192,10 @@ if __name__ == "__main__":
         arima_fc = naive_fc.copy()
         arima_fc["model"] = "ARIMA_unavailable_fallback_to_naive"
 
-    fig = plot_forecast_comparison(series, naive_fc, arima_fc, top_sector)
+    fig = plot_forecast_comparison(series, naive_fc, arima_fc, "Overall")
     fig.show()
 
-    audit = confidence_audit(series, top_sector)
+    audit = confidence_audit(series, "Overall")
     print("\nConfidence Audit:")
     for a in audit["assumptions"]:
         print(f"  - [{a['risk_level']}] {a['assumption']} (shaky if: {a['shaky_if']})")

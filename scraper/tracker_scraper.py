@@ -29,16 +29,14 @@ import pandas as pd
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 
+try:
+    from .config import USER_AGENT, HEADERS, REQUEST_TIMEOUT, DEFAULT_WARN_STATE_URL, get_logger
+except ImportError:
+    from config import USER_AGENT, HEADERS, REQUEST_TIMEOUT, DEFAULT_WARN_STATE_URL, get_logger
+
 load_dotenv()
 
-USER_AGENT = "Mozilla/5.0 (compatible; LayoffPulse2026Bot/1.0; DS Club educational project)"
-HEADERS = {"User-Agent": USER_AGENT}
-REQUEST_TIMEOUT = 30
-
-# Confirmed live 2026-08-03: a state WARN page with a genuine server-rendered
-# HTML table of individual notices (not just a PDF/XLSX download, which is
-# what CA EDD's page moved to -- see scrape_warn_act() docstring).
-DEFAULT_WARN_STATE_URL = "https://www.dllr.state.md.us/employment/warn.shtml"
+log = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # 1. layoffs.fyi -> embedded Airtable view
@@ -319,7 +317,6 @@ def scrape_warn_act(state_url: str = DEFAULT_WARN_STATE_URL) -> pd.DataFrame:
         problem you'll hit in pipeline/clean.py.
     """
     from bs4 import BeautifulSoup
-    from io import StringIO
 
     resp = requests.get(state_url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
@@ -333,19 +330,11 @@ def scrape_warn_act(state_url: str = DEFAULT_WARN_STATE_URL) -> pd.DataFrame:
             "example of a source going stale mid-project."
         )
 
-    # Consider tables largest-first, but only accept one whose header row
-    # actually looks like a WARN notice listing (company/employer + a date
-    # column) -- otherwise we risk silently parsing an unrelated table on
-    # the page (confirmed to happen on CA EDD's page, which still has one
-    # <table> that's just a legal-provisions comparison chart).
-    warn_shape_keywords = ("company", "employer", "notice", "date", "employee")
-    for target_table in sorted(tables, key=lambda t: len(t.find_all("tr")), reverse=True):
-        df = pd.read_html(StringIO(str(target_table)))[0]
-        headers = " ".join(str(c) for c in df.columns).lower()
-        if any(kw in headers for kw in warn_shape_keywords) and len(df) > 1:
-            df["_source"] = f"WARN Act ({state_url})"
-            df["_scraped_at"] = datetime.now(timezone.utc).isoformat()
-            return df
+    df = _select_warn_table(tables)
+    if df is not None:
+        df["_source"] = f"WARN Act ({state_url})"
+        df["_scraped_at"] = datetime.now(timezone.utc).isoformat()
+        return df
 
     raise RuntimeError(
         f"Found {len(tables)} <table> element(s) at {state_url}, but none had "
@@ -353,6 +342,29 @@ def scrape_warn_act(state_url: str = DEFAULT_WARN_STATE_URL) -> pd.DataFrame:
         "like company/employer + date columns). The page structure has "
         "likely changed -- narrate this live as a source going stale."
     )
+
+
+def _select_warn_table(candidate_tables: list):
+    """
+    Given raw <table> BeautifulSoup Tag elements from a page, parse each with
+    pandas and return the first one (largest-first by row count) whose header
+    row looks WARN-notice-shaped (company/employer + date columns) and has
+    more than one data row. Returns None if none qualify.
+
+    Pulled out as a pure function (no HTTP call) specifically so the
+    "does this look like a WARN table" heuristic -- the exact logic that
+    silently mis-picked CA EDD's unrelated legal-provisions table before this
+    check existed -- can be unit tested against canned tables.
+    """
+    from io import StringIO
+
+    warn_shape_keywords = ("company", "employer", "notice", "date", "employee")
+    for target_table in sorted(candidate_tables, key=lambda t: len(t.find_all("tr")), reverse=True):
+        df = pd.read_html(StringIO(str(target_table)))[0]
+        headers = " ".join(str(c) for c in df.columns).lower()
+        if any(kw in headers for kw in warn_shape_keywords) and len(df) > 1:
+            return df
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -432,31 +444,31 @@ def get_live_tracker_data(airtable_base_id: str = None, warn_state_url: str = DE
     attempts = []
 
     try:
-        print("[1/3] Trying layoffs.fyi Airtable view (live)...")
+        log.info("[1/3] Trying layoffs.fyi Airtable view (live)...")
         df = scrape_layoffsfyi_airtable(base_id=airtable_base_id)
-        print(f"      Success -- {len(df)} rows.")
+        log.info("      Success -- %d rows.", len(df))
         return df
     except Exception as e:
-        print(f"      Failed: {e}")
+        log.warning("      Failed: %s", e)
         attempts.append(("airtable", str(e)))
 
     try:
-        print("[2/3] Trying Apify hosted actor (live)...")
+        log.info("[2/3] Trying Apify hosted actor (live)...")
         df = scrape_via_apify()
-        print(f"      Success -- {len(df)} rows.")
+        log.info("      Success -- %d rows.", len(df))
         return df
     except Exception as e:
-        print(f"      Failed: {e}")
+        log.warning("      Failed: %s", e)
         attempts.append(("apify", str(e)))
 
     if warn_state_url:
         try:
-            print("[3/3] Trying WARN Act state filing page (live)...")
+            log.info("[3/3] Trying WARN Act state filing page (live)...")
             df = scrape_warn_act(warn_state_url)
-            print(f"      Success -- {len(df)} rows.")
+            log.info("      Success -- %d rows.", len(df))
             return df
         except Exception as e:
-            print(f"      Failed: {e}")
+            log.warning("      Failed: %s", e)
             attempts.append(("warn_act", str(e)))
 
     raise RuntimeError(
@@ -468,24 +480,23 @@ def get_live_tracker_data(airtable_base_id: str = None, warn_state_url: str = DE
 
 
 if __name__ == "__main__":
-    print("=== Layoff Pulse 2026: live tracker scrape demo ===\n")
+    log.info("=== Layoff Pulse 2026: live tracker scrape demo ===")
     try:
         hook = scrape_trueup_headline()
-        print("Opening hook numbers (raw, unparsed):", hook["raw_numbers_found"], "\n")
+        log.info("Opening hook numbers (raw, unparsed): %s", hook["raw_numbers_found"])
     except RuntimeError as e:
-        print(f"Opening hook failed (documented dead end -- narrate live): {e}\n")
+        log.warning("Opening hook failed (documented dead end -- narrate live): %s", e)
 
     df = get_live_tracker_data(
         airtable_base_id=os.environ.get("LAYOFFSFYI_AIRTABLE_BASE"),
         warn_state_url=os.environ.get("WARN_STATE_URL", DEFAULT_WARN_STATE_URL),
     )
-    print("\nRaw live sample (first 5 rows):")
-    print(df.head())
+    log.info("Raw live sample (first 5 rows):\n%s", df.head())
 
     from pathlib import Path
     out_dir = Path(__file__).resolve().parent.parent / "data" / "raw"
     out_dir.mkdir(parents=True, exist_ok=True)
-    
+
     out_file = out_dir / "tracker_raw_live.csv"
     df.to_csv(out_file, index=False)
-    print(f"\nSaved to {out_file}")
+    log.info("Saved to %s", out_file)

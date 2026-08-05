@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: layoff-pulse-backend
+    runtime: python
+    plan: free
+    branch: main
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      # Comma-separated list of allowed frontend origins (CORS). Update
+      # this to your actual Vercel domain(s) once deployed -- see backend/app/config.py.
+      - key: FRONTEND_ORIGINS
+        value: http://localhost:3000
