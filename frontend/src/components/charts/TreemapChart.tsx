@@ -18,11 +18,16 @@ interface TreemapCellProps {
 
 function TreemapCell({ x = 0, y = 0, width = 0, height = 0, name = "", depth, theme }: TreemapCellProps) {
   const fill = depth === 1 ? colorForName(name, theme) : "transparent";
+  // Only label the sector (depth 1) cells -- Recharts' Treemap layout starts
+  // the first child at the same corner as its parent, so labeling both
+  // depths renders two strings on top of each other (e.g. "Microsoft" +
+  // "Other" -> "Mibersoft"). Company names are still available via the
+  // tooltip on hover.
   return (
     <g>
       <rect x={x} y={y} width={width} height={height} style={{ fill, stroke: "var(--background)", strokeWidth: 2 }} />
-      {width > 60 && height > 20 && (
-        <text x={x + 6} y={y + 16} fontSize={11} fill={depth === 1 ? "#fff" : "var(--foreground)"}>
+      {depth === 1 && width > 60 && height > 20 && (
+        <text x={x + 6} y={y + 16} fontSize={11} fill="#fff">
           {name}
         </text>
       )}

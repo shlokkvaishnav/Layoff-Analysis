@@ -49,7 +49,7 @@ export default async function LandingPage() {
         </div>
       </section>
 
-      <section className="relative z-10 -mt-28 px-2">
+      <section className="relative z-10 mt-10 px-2">
         <div className="max-w-5xl mx-auto grid grid-cols-2 sm:grid-cols-4 gap-4">
           <StatCard label="Layoff events tracked" value={formatNumber(summary.total_rows)} />
           <StatCard label="People affected (sum)" value={formatNumber(summary.people_affected_sum)} />

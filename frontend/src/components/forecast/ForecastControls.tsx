@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ForecastOptions } from "@/lib/types";
 
@@ -17,6 +18,18 @@ export function ForecastControls({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+
+  // The slider's displayed value is local state, not the `horizon` prop
+  // directly -- `horizon` only updates after a full server round-trip
+  // (router.push -> re-fetch), so binding the input straight to it made the
+  // handle visually snap back mid-drag while that request was in flight.
+  // Local state gives instant feedback; the URL (and refetch) only commits
+  // once the user releases the slider.
+  const [localHorizon, setLocalHorizon] = useState(horizon);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLocalHorizon(horizon);
+  }, [horizon]);
 
   function setParam(key: string, value: string) {
     const params = new URLSearchParams(searchParams.toString());
@@ -81,13 +94,16 @@ export function ForecastControls({
       )}
 
       <label className="flex flex-col gap-1">
-        <span className="text-muted text-xs">Forecast horizon (months): {horizon}</span>
+        <span className="text-muted text-xs">Forecast horizon (months): {localHorizon}</span>
         <input
           type="range"
           min={1}
           max={6}
-          value={horizon}
-          onChange={(e) => setParam("horizon", e.target.value)}
+          value={localHorizon}
+          onChange={(e) => setLocalHorizon(Number(e.target.value))}
+          onMouseUp={(e) => setParam("horizon", (e.target as HTMLInputElement).value)}
+          onTouchEnd={(e) => setParam("horizon", (e.target as HTMLInputElement).value)}
+          onKeyUp={(e) => setParam("horizon", (e.target as HTMLInputElement).value)}
         />
       </label>
     </div>

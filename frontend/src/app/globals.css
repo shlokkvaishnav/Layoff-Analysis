@@ -8,6 +8,7 @@
   --border: #e5e0d8;
   --accent: #8b5a2b;
   --accent-strong: #6f4726;
+  color-scheme: light;
 }
 
 :root[data-theme="dark"] {
@@ -18,6 +19,7 @@
   --border: #34302a;
   --accent: #d2b48c;
   --accent-strong: #e8cda3;
+  color-scheme: dark;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -29,6 +31,7 @@
     --border: #34302a;
     --accent: #d2b48c;
     --accent-strong: #e8cda3;
+    color-scheme: dark;
   }
 }
 
