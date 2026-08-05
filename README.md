@@ -1,143 +1,120 @@
+<div align="center">
+
 # Layoff Pulse 2026
 
-A trend / reason / forecast website for tech layoffs, built on a live
-scrape → clean → serve pipeline. The deployed product is a Next.js
-frontend backed by a FastAPI API; a scheduled job keeps the underlying data
-current without any request ever triggering a live scrape.
+**Trend, reason, and forecast analysis of tech-sector layoffs — built on live, continuously refreshed data.**
 
-## Why this exists
+[![Live Site](https://img.shields.io/badge/live-layoff--analysis.vercel.app-8B5A2B)](https://layoff-analysis.vercel.app)
+![Next.js](https://img.shields.io/badge/Next.js-16-black)
+![FastAPI](https://img.shields.io/badge/FastAPI-Python-009688)
+![Recharts](https://img.shields.io/badge/charts-Recharts-8884d8)
 
-Layoffs are continuous, heavily covered news — a live, scrapeable dataset
-rather than a static Kaggle CSV. The site is organized around three
-questions: what's the **trend**, what **reason** do companies give, and
-what does that imply about the **future**. Sector/Industry alone turned out
-to be a weak lens for this (the largest single "sector" by headcount is an
-uninformative "Other" catch-all) — funding **Stage** and **Country** are
-better-populated, more reliable structured dimensions, and stated reasons
-are extracted directly from each layoff's own linked news source.
+</div>
+
+<!-- ![Trend dashboard](docs/screenshots/trend.png) -->
+
+## What it is
+
+A full-stack analytics site answering three questions about tech-sector layoffs from real, live-scraped data — not a static Kaggle CSV:
+
+- **Trend** — monthly volume, 30-day moving average, breakdowns by funding stage and country.
+- **Reason** — stated causes extracted directly from each layoff's own linked news article.
+- **Forecast** — naive baseline vs. ARIMA, with a transparent audit of which assumptions are shaky.
+
+Industry/sector alone turned out to be a weak lens for this data — the largest single "sector" by headcount is an uninformative "Other" catch-all. Funding **Stage** and **Country** are better-populated, more reliable dimensions, used throughout instead.
+
+## Screenshots
+
+<!--
+| Trend | Sector | Forecast |
+|---|---|---|
+| ![Trend](docs/screenshots/trend.png) | ![Sector](docs/screenshots/sector.png) | ![Forecast](docs/screenshots/forecast.png) |
+-->
+
+## Live Demo
+
+- **Site:** [layoff-analysis.vercel.app](https://layoff-analysis.vercel.app)
+- **API:** [layoff-pulse-backend.onrender.com/api/meta/health](https://layoff-pulse-backend.onrender.com/api/meta/health)
+
+> The backend runs on Render's free tier and sleeps after ~15 min idle — first load after a quiet period may take 30–60s to wake up.
+
+## Features
+
+- Live scrape → clean → serve pipeline, refreshed daily via a scheduled job — no static dataset, no manual updates.
+- Fuzzy company-name deduplication, headcount imputation, and structured Stage/Country/AI-flag standardization.
+- Reason extraction from each layoff's own source article, with a visible coverage percentage rather than a black-box claim.
+- Naive + ARIMA forecasting with a confidence audit that names its own shaky assumptions.
+- Zero API tokens required to run — the primary data source is a token-free live scrape.
+
+## Tech Stack
+
+| | |
+|---|---|
+| **Frontend** | Next.js 16 (App Router), TypeScript, Tailwind CSS, Recharts, React Three Fiber |
+| **Backend** | FastAPI, Pandas, statsmodels (ARIMA) |
+| **Data collection** | BeautifulSoup, Playwright, feedparser |
+| **Infra** | GitHub Actions (scheduled refresh), Vercel, Render |
 
 ## Architecture
 
 ```
+scraper/    → live data collection (layoffs.fyi, news RSS + articles)
+pipeline/   → cleaning, standardization, reason-tagging, forecasting
+backend/    → FastAPI read-only JSON API over the cleaned dataset
+frontend/   → Next.js site consuming that API
+scripts/    → scheduled refresh entry point (scrape → clean → tag → commit)
+```
+
+The API never scrapes live — a scheduled GitHub Actions job
+(`.github/workflows/refresh-data.yml`) does that once daily and commits the
+result; the backend just serves it. This keeps every page load fast and
+keeps the free-tier backend from ever timing out on a live scrape.
+
+<details>
+<summary>Full directory structure</summary>
+
+```
 LayoffAnalysis/
-├── scraper/                 # live: layoffs.fyi (Airtable shared-view → Apify → WARN Act fallback chain),
-│   │                          RSS headlines + article text + naive reason-tagging
-│   ├── tracker_scraper.py
-│   ├── news_scraper.py
-│   └── config.py
-├── pipeline/                 # cleaning, aggregation, and forecasting logic (framework-agnostic)
-│   ├── clean.py              # fuzzy company dedupe, sector/stage/country standardization, headcount imputation
-│   ├── reasons.py            # merges news-scraper reason-tags onto tracker rows, cache-backed
-│   ├── eda.py                # chart-ready aggregations (mirrored by backend/app/services/aggregations.py)
-│   ├── forecast.py           # naive rolling-avg baseline + ARIMA, confidence-interval audit
-│   └── config.py
-├── backend/                  # FastAPI -- wraps pipeline/scraper as a fast, read-only JSON API
-│   └── app/{main,state,config}.py, models/, routers/, services/
-├── frontend/                  # Next.js + Recharts -- the deployed site (Trend, Sector, Reasons, Forecast, Raw)
-├── scripts/
-│   └── refresh_data.py        # scheduled entry point: scrape -> clean -> tag reasons -> write status
-├── .github/workflows/
-│   └── refresh-data.yml       # daily cron running refresh_data.py, commits data/ back to the repo
-├── render.yaml                 # Render Blueprint for the backend
-└── data/
-    ├── raw/                    # latest raw scrape
-    └── cleaned/                # cleaned dataset, reason-tag cache, last_refresh.json
+├── scraper/              tracker_scraper.py, news_scraper.py, config.py
+├── pipeline/              clean.py, reasons.py, eda.py, forecast.py, config.py
+├── backend/                FastAPI app/{main,state,config}.py, models/, routers/, services/
+├── frontend/                Next.js app/, components/, lib/
+├── scripts/refresh_data.py
+├── .github/workflows/refresh-data.yml
+├── render.yaml
+└── data/{raw,cleaned}/
 ```
+</details>
 
-**Why the API never scrapes live:** `tracker_scraper.get_live_tracker_data()`
-can take up to ~300s (Apify fallback), and reason-tagging does live
-per-article HTTP fetches. Neither happens inside a request — `backend/`
-loads `data/cleaned/tracker_cleaned.csv` once at process startup and serves
-fast, read-only JSON over it (forecasting is the one exception: ARIMA on
-~78 monthly points is genuinely sub-second, so that *is* computed
-per-request). All the slow work lives in `scripts/refresh_data.py`, run on a
-schedule by `.github/workflows/refresh-data.yml`.
+## Running Locally
 
-**No API tokens required.** The primary source
-(`scrape_layoffsfyi_airtable`'s shared-view path) captures a signed URL via
-a one-time headless-browser visit (Playwright), then does a single plain,
-unauthenticated `GET` — this is what produced the dataset currently
-committed to this repo. `AIRTABLE_PAT`/`APIFY_TOKEN` are optional
-faster-path/fallback enhancements the code tries first if set, never
-required. If every live source fails, `refresh_data.py` exits non-zero and
-the workflow's commit step never runs — the site keeps serving the last
-known-good data instead of going stale silently or breaking.
-
-## Running it locally
-
-**Backend:**
 ```bash
+# Backend
 pip install -r backend/requirements.txt
-cd backend
-uvicorn app.main:app --reload --port 8000
-```
-`FRONTEND_ORIGINS` (comma-separated) controls CORS; defaults to
-`http://localhost:3000`. `DATA_DIR` defaults to `../data`.
+cd backend && uvicorn app.main:app --reload --port 8000
 
-> Note: on this project's dev machine, `uvicorn --reload`'s file watcher
-> unreliably misses changes when the repo lives in a OneDrive-synced
-> folder. If edits don't seem to take effect, restart the server manually.
-
-**Frontend:**
-```bash
+# Frontend (new terminal)
 cd frontend
 npm install
-cp .env.local.example .env.local   # NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+cp .env.local.example .env.local
 npm run dev
-```
 
-**Refresh the data manually** (runs the same live scrape the scheduled job runs):
-```bash
-pip install -r requirements.txt
-playwright install chromium
+# Manually refresh the data (optional — same as the scheduled job)
+pip install -r requirements.txt && playwright install chromium
 python scripts/refresh_data.py
 ```
 
 ## Deploying
 
-- **Frontend → Vercel** (free/Hobby tier). Set the project's Root Directory
-  to `frontend`, and `NEXT_PUBLIC_API_BASE_URL` to the deployed backend URL.
-- **Backend → Render** (free Web Service, no card required). This repo
-  includes `render.yaml` — connect the repo as a Blueprint, or configure
-  manually: root dir `backend`, build `pip install -r requirements.txt`,
-  start `uvicorn app.main:app --host 0.0.0.0 --port $PORT`. Set
-  `FRONTEND_ORIGINS` to your Vercel domain(s) once deployed.
-  - **Known caveat:** Render's free tier sleeps after ~15 min idle; the
-    first request after sleep costs a ~30–60s cold start (`pandas`/
-    `statsmodels` import time included). Expected behavior, not a bug —
-    don't fight it with a keep-alive pinger.
-- **Scheduled refresh → GitHub Actions** (`.github/workflows/refresh-data.yml`,
-  free for public repos). Trigger it once manually via `workflow_dispatch`
-  to confirm the commit + Render's auto-deploy-on-push actually fire before
-  relying on the daily cron.
+| Service | Where | Config |
+|---|---|---|
+| Frontend | Vercel (free) | Root Directory: `frontend`, env: `NEXT_PUBLIC_API_BASE_URL` |
+| Backend | Render (free) | `render.yaml` Blueprint, env: `FRONTEND_ORIGINS` |
+| Data refresh | GitHub Actions (free) | `.github/workflows/refresh-data.yml`, no secrets required |
 
-## Known constraints (verified against the live internet, re-verify periodically)
+## Notes on the Data
 
-- **The Apify actor fallback** (`useful-ai~tech-layoff-intelligence-tracker`)
-  requires an `APIFY_TOKEN` (free tier at apify.com) and is only reached if
-  the primary Airtable shared-view path fails.
-- **WARN Act state filings** (final fallback, default Maryland DLLR) cover a
-  single state and lack Stage/Country/AI-flag/funds-raised fields entirely
-  — a refresh that falls all the way through to this source will show much
-  smaller numbers and empty Stage/Country charts than the Airtable-sourced
-  data. `pipeline/clean.py` guards every Airtable-only field on the source
-  column actually being present, so this degrades gracefully rather than
-  crashing.
-- **Reason-tagging is deliberately naive** (keyword matching over article
-  text, not real NLP) — intentional, so its limits stay visible instead of
-  trusting a black box. Coverage compounds slowly across scheduled runs
-  (`REASON_TAG_BATCH_SIZE`, default 50 articles/run) rather than all at once.
-- **The ARIMA order is fixed, not auto-tuned**, to keep the model's
-  assumptions visible and debuggable — `confidence_audit()` flags when a
-  series has too little history for that fit to mean much.
-- **`trueup.io/layoffs`** is a confirmed dead end for `requests`+BeautifulSoup
-  (Cloudflare JS challenge) — not attempted by the production pipeline.
-
-## Things to keep in mind when interpreting this data
-
-- Is a spike in a sector/stage a real spike, or a base-rate artifact of that
-  bucket having more companies tracked?
-- Companies cite "restructuring" — does the data support that, or is it PR
-  language masking something else?
-- Is a forecast extrapolating a real trend, or continuing a few months of
-  noise? What's *not* in the data that could break it?
+- **No API tokens required.** The primary source (`scrape_layoffsfyi_airtable`) captures a signed URL via a one-time headless-browser visit, then a single plain, unauthenticated `GET`.
+- **Reason-tagging is deliberately keyword-based**, not real NLP — its coverage percentage is always shown alongside it rather than hidden.
+- **ARIMA's order is fixed, not auto-tuned**, so its assumptions stay visible; a confidence audit flags when a series has too little history to trust.
+- **If every live source fails**, the scheduled refresh exits non-zero and nothing gets committed — the site keeps serving last known-good data instead of going stale silently.
