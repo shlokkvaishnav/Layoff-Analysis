@@ -11,7 +11,6 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
-      # Comma-separated list of allowed frontend origins (CORS). Update
-      # this to your actual Vercel domain(s) once deployed -- see backend/app/config.py.
+      # Comma-separated list of allowed frontend origins (CORS) -- see backend/app/config.py.
       - key: FRONTEND_ORIGINS
-        value: http://localhost:3000
+        value: https://layoff-analysis.vercel.app,http://localhost:3000
