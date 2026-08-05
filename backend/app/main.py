@@ -24,7 +24,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Layoff Pulse 2026 API", lifespan=lifespan)
+app = FastAPI(title="Layoff Pulse API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

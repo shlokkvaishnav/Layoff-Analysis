@@ -22,9 +22,7 @@ function DistortedCore({ color }: { color: string }) {
   );
 }
 
-// Deterministic scatter (not Math.random()) -- calling an impure RNG during
-// render is flagged by React's purity rules, even inside useMemo, since the
-// factory itself still runs on the render path.
+// Deterministic scatter, not Math.random() -- React flags RNG calls during render.
 function scatterPosition(i: number): [number, number, number] {
   const a = i * 2.399963; // golden-angle-ish step for a non-repeating-looking spread
   return [

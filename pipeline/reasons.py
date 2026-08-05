@@ -1,18 +1,7 @@
 """
-reasons.py
-----------
-Elevates news_scraper's stated-reason keyword tagging from a decorative
-sidebar list into a first-class, merged feature of the main tracker
-dataset. Every tracker row already carries its own source article URL (the
-'Source' column) -- reused directly here instead of a separate, much
-sparser RSS-headline sample that has no guaranteed link back to a specific
-company/row at all.
-
-Fetching+tagging every row live on every call would be slow and hammer
-article sites, so results are cached by source URL in a small CSV
-(cache_path) and only a capped batch of not-yet-cached rows is processed
-per call -- coverage compounds across repeated runs instead of refetching
-everything each time.
+Tags each layoff row with a stated reason, using the article URL already
+attached to that row (the 'Source' column). Results are cached by URL in a
+CSV so repeated runs only fetch new articles, not everything again.
 """
 
 import sys
@@ -101,12 +90,7 @@ def tag_reasons_for_rows(df: pd.DataFrame, cache_path: Path = DEFAULT_CACHE_PATH
 
 
 def summarize_reasons(df: pd.DataFrame, stage_col: str = "stage") -> dict:
-    """
-    Coverage + frequency summary of reason_tags -- a DELIVERABLE, not
-    decoration, mirroring clean.py's _headcount_imputed transparency
-    pattern: never present reason-tag frequencies without saying what
-    fraction of rows they're actually based on.
-    """
+    """Coverage % plus reason-frequency counts overall, by stage, and by quarter."""
     empty_summary = {
         "coverage_pct": 0.0, "tagged_rows": 0, "total_rows": len(df),
         "overall_counts": {}, "by_stage_counts": {}, "by_quarter_counts": {},

@@ -9,6 +9,7 @@ const LINKS = [
   { href: "/sector", label: "Sector & Company Detail" },
   { href: "/reasons", label: "Stated Reasons" },
   { href: "/forecast", label: "Forecast" },
+  { href: "/insights", label: "Insights" },
   { href: "/raw", label: "Raw Data Explorer" },
 ];
 
@@ -20,7 +21,7 @@ export function SiteNav() {
     <header className="border-b" style={{ borderColor: "var(--border)" }}>
       <div className="mx-auto max-w-6xl px-4 py-3 flex items-center gap-6">
         <Link href="/" className="font-semibold whitespace-nowrap">
-          Layoff Pulse 2026
+          Layoff Pulse
         </Link>
         <nav className="flex gap-4 text-sm overflow-x-auto">
           {LINKS.map((link) => (

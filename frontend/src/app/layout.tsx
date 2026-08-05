@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Layoff Pulse 2026",
+  title: "Layoff Pulse",
   description: "Trend, reason, and forecast analysis of tech layoffs.",
 };
 

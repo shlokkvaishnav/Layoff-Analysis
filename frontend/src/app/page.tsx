@@ -21,7 +21,7 @@ export default async function LandingPage() {
         />
 
         <div className="glass relative z-10 max-w-3xl mx-auto text-center px-8 py-12 sm:px-14 sm:py-16 rounded-[2.5rem]">
-          <p className="text-xs tracking-[0.3em] uppercase text-muted mb-5">Layoff Pulse 2026</p>
+          <p className="text-xs tracking-[0.3em] uppercase text-muted mb-5">Layoff Pulse</p>
           <h1 className="text-5xl sm:text-6xl font-semibold tracking-tight leading-[1.05]">
             The tech layoff signal,{" "}
             <span style={{ color: "var(--accent)" }}>read straight</span>.

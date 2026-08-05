@@ -114,14 +114,7 @@ def standardize_ai_flag(raw_ai):
 
 
 def clean_location_hq(raw_value):
-    """
-    Normalize layoffs.fyi's Location HQ field to plain text. This field
-    arrives as a genuine Python list (Airtable multi-select) on a fresh
-    in-memory scrape, but as a list-literal-formatted string (e.g.
-    "['SF Bay Area']") once it's been round-tripped through a CSV -- both
-    shapes are handled here since pipeline/reasons and this module get called
-    on data in either form depending on the caller (see scripts/refresh_data.py).
-    """
+    """Normalize Location HQ to plain text -- handles both a real list (fresh scrape) and a stringified list (loaded from CSV)."""
     if isinstance(raw_value, list):
         return ", ".join(str(v) for v in raw_value) if raw_value else np.nan
     if pd.isna(raw_value):

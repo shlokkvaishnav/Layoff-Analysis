@@ -19,13 +19,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: uv sync --frozen --no-dev
 
       # scraper/tracker_scraper.py's primary source (layoffs.fyi's Airtable
       # shared-view) needs a one-time headless-browser visit to capture a
@@ -33,7 +33,7 @@ jobs:
       # tokens required. This is the source that produced the dataset
       # already committed to this repo.
       - name: Install Playwright's Chromium
-        run: playwright install --with-deps chromium
+        run: uv run playwright install --with-deps chromium
 
       # No secrets required for the primary (Airtable shared-view) or
       # fallback (WARN Act) sources -- both are free and token-less. If you
@@ -41,7 +41,7 @@ jobs:
       # APIFY_TOKEN repo secret and pass it here; it's intentionally omitted
       # by default so this workflow has zero external-API dependencies.
       - name: Run data refresh
-        run: python scripts/refresh_data.py
+        run: uv run python scripts/refresh_data.py
 
       # If every source failed, refresh_data.py already exited non-zero
       # above and the job stopped -- nothing below runs, so last known-good

@@ -1,12 +1,6 @@
 """
-state.py
---------
-Loads the cleaned tracker dataset once at process startup and holds it as a
-module-level singleton, reading the same CSV the scheduled refresh job
-writes and merging cached reason-tags via
-reasons.tag_reasons_for_rows(max_articles=0) (cache-only, zero network
-calls). No endpoint re-reads the CSV or re-tags reasons live; that only
-happens in the scheduled refresh job (scripts/refresh_data.py).
+Loads the cleaned dataset once at startup and holds it in memory.
+Endpoints read from this cache -- nothing re-scrapes or re-tags on request.
 """
 
 import pandas as pd
